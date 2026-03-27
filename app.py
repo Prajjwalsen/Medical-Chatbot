@@ -5,6 +5,8 @@ from langchain_groq import ChatGroq
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
+from langchain.memory import ConversationBufferMemory
+from langchain_core.prompts import MessagesPlaceholder 
 from dotenv import load_dotenv
 from src.prompt import *
 import os
@@ -33,18 +35,29 @@ docsearch = PineconeVectorStore.from_existing_index(
 
 retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k":3})
 
+memory = ConversationBufferMemory(
+    memory_key="chat_history",
+    return_messages=True
+)
+
 chatModel = ChatGroq(
     groq_api_key=os.getenv("GROQ_API_KEY"),
     model_name="llama-3.1-8b-instant"
 )
+
 prompt = ChatPromptTemplate.from_messages(
     [
         ("system", system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"), 
         ("human", "{input}"),
     ]
 )
+
 question_answer_chain = create_stuff_documents_chain(chatModel, prompt)
-rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+rag_chain = create_retrieval_chain(
+    retriever,
+    question_answer_chain
+)
 
 @app.route("/")
 def index():
@@ -55,7 +68,14 @@ def chat():
     msg = request.form["msg"]
     input = msg
     print(input)
-    response = rag_chain.invoke({"input": msg})
+    response = rag_chain.invoke({
+    "input": msg,
+    "chat_history": memory.load_memory_variables({})["chat_history"]
+    })
+    memory.save_context(
+    {"input": msg},
+    {"output": response["answer"]}
+)
     print("Response : ", response["answer"])
     return str(response["answer"])
 if __name__ == '__main__':
